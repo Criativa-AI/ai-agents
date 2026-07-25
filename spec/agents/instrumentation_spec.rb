@@ -7,7 +7,10 @@ require_relative "../../lib/agents/instrumentation"
 module OpenTelemetry
   module Trace
     class Tracer; end
-    class Span; end
+
+    class Span
+      def add_event(_name, attributes: {}); end
+    end
   end
 end
 
