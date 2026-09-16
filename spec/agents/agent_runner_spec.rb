@@ -50,6 +50,8 @@ RSpec.describe Agents::AgentRunner do
                     usage: {})
   end
 
+  let(:runner) { described_class.new([triage_agent, billing_agent, support_agent]) }
+
   describe "#initialize" do
     context "with valid agents" do
       it "creates an agent runner with provided agents" do
@@ -129,7 +131,7 @@ RSpec.describe Agents::AgentRunner do
           registry: hash_including("Triage Agent" => triage_agent),
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
           headers: nil,
-          params: nil,
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -153,7 +155,7 @@ RSpec.describe Agents::AgentRunner do
           registry: anything,
           max_turns: 5,
           headers: nil,
-          params: nil,
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -168,9 +170,7 @@ RSpec.describe Agents::AgentRunner do
       end
 
       it "passes custom headers to the runner" do
-        headers = { "X-Test" => "value" }
-
-        runner.run("Hello", headers: headers)
+        runner.run("Hello", headers: { "X-Test" => "value" })
 
         expect(mock_runner_instance).to have_received(:run).with(
           triage_agent,
@@ -178,8 +178,8 @@ RSpec.describe Agents::AgentRunner do
           context: {},
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
-          headers: headers,
-          params: nil,
+          headers: { "X-Test" => "value" },
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -215,7 +215,7 @@ RSpec.describe Agents::AgentRunner do
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
           headers: nil,
-          params: nil,
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -250,7 +250,7 @@ RSpec.describe Agents::AgentRunner do
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
           headers: nil,
-          params: nil,
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -285,7 +285,7 @@ RSpec.describe Agents::AgentRunner do
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
           headers: nil,
-          params: nil,
+          params: nil, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -307,9 +307,7 @@ RSpec.describe Agents::AgentRunner do
 
     context "when passing custom params" do
       it "passes custom params to the runner" do
-        params = { service_tier: "default" }
-
-        runner.run("Hello", params: params)
+        runner.run("Hello", params: { service_tier: "default" })
 
         expect(mock_runner_instance).to have_received(:run).with(
           triage_agent,
@@ -318,7 +316,7 @@ RSpec.describe Agents::AgentRunner do
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
           headers: nil,
-          params: params,
+          params: { service_tier: "default" }, limits: {},
           callbacks: hash_including(
             run_start: [],
             run_complete: [],
@@ -334,95 +332,91 @@ RSpec.describe Agents::AgentRunner do
     end
   end
 
-  describe "private methods" do
-    let(:runner) { described_class.new([triage_agent, billing_agent, support_agent]) }
+  describe "#build_registry" do
+    it "creates a hash mapping agent names to agents" do
+      registry = runner.send(:build_registry, [triage_agent, billing_agent])
 
-    describe "#build_registry" do
-      it "creates a hash mapping agent names to agents" do
-        registry = runner.send(:build_registry, [triage_agent, billing_agent])
+      expect(registry).to eq({
+                               "Triage Agent" => triage_agent,
+                               "Billing Agent" => billing_agent
+                             })
+    end
 
-        expect(registry).to eq({
-                                 "Triage Agent" => triage_agent,
-                                 "Billing Agent" => billing_agent
-                               })
-      end
+    it "handles duplicate agent names by using the last occurrence" do
+      duplicate_agent = instance_double(Agents::Agent, name: "Triage Agent")
+      registry = runner.send(:build_registry, [triage_agent, duplicate_agent])
 
-      it "handles duplicate agent names by using the last occurrence" do
-        duplicate_agent = instance_double(Agents::Agent, name: "Triage Agent")
-        registry = runner.send(:build_registry, [triage_agent, duplicate_agent])
+      expect(registry["Triage Agent"]).to eq(duplicate_agent)
+    end
+  end
 
-        expect(registry["Triage Agent"]).to eq(duplicate_agent)
+  describe "#determine_conversation_agent" do
+    context "with empty context" do
+      it "returns the default agent" do
+        agent = runner.send(:determine_conversation_agent, {})
+        expect(agent).to eq(triage_agent)
       end
     end
 
-    describe "#determine_conversation_agent" do
-      context "with empty context" do
-        it "returns the default agent" do
-          agent = runner.send(:determine_conversation_agent, {})
-          expect(agent).to eq(triage_agent)
-        end
+    context "with empty conversation history" do
+      it "returns the default agent" do
+        agent = runner.send(:determine_conversation_agent, { conversation_history: [] })
+        expect(agent).to eq(triage_agent)
+      end
+    end
+
+    context "with conversation history" do
+      it "finds the last assistant message with agent attribution" do
+        context = {
+          conversation_history: [
+            { role: :user, content: "Hello" },
+            { role: :assistant, content: "Hi", agent_name: "Triage Agent" },
+            { role: :user, content: "I need billing help" },
+            { role: :assistant, content: "Sure thing", agent_name: "Billing Agent" },
+            { role: :user, content: "What's my balance?" }
+          ]
+        }
+
+        agent = runner.send(:determine_conversation_agent, context)
+        expect(agent).to eq(billing_agent)
       end
 
-      context "with empty conversation history" do
-        it "returns the default agent" do
-          agent = runner.send(:determine_conversation_agent, { conversation_history: [] })
-          expect(agent).to eq(triage_agent)
-        end
+      it "ignores assistant messages without agent attribution" do
+        context = {
+          conversation_history: [
+            { role: :user, content: "Hello" },
+            { role: :assistant, content: "Hi", agent_name: "Billing Agent" },
+            { role: :assistant, content: "Additional info" }, # No agent_name
+            { role: :user, content: "Continue" }
+          ]
+        }
+
+        agent = runner.send(:determine_conversation_agent, context)
+        expect(agent).to eq(billing_agent) # Should use the attributed message
       end
 
-      context "with conversation history" do
-        it "finds the last assistant message with agent attribution" do
-          context = {
-            conversation_history: [
-              { role: :user, content: "Hello" },
-              { role: :assistant, content: "Hi", agent_name: "Triage Agent" },
-              { role: :user, content: "I need billing help" },
-              { role: :assistant, content: "Sure thing", agent_name: "Billing Agent" },
-              { role: :user, content: "What's my balance?" }
-            ]
-          }
+      it "falls back to default when agent not found in registry" do
+        context = {
+          conversation_history: [
+            { role: :user, content: "Hello" },
+            { role: :assistant, content: "Hi", agent_name: "Nonexistent Agent" }
+          ]
+        }
 
-          agent = runner.send(:determine_conversation_agent, context)
-          expect(agent).to eq(billing_agent)
-        end
+        agent = runner.send(:determine_conversation_agent, context)
+        expect(agent).to eq(triage_agent)
+      end
 
-        it "ignores assistant messages without agent attribution" do
-          context = {
-            conversation_history: [
-              { role: :user, content: "Hello" },
-              { role: :assistant, content: "Hi", agent_name: "Billing Agent" },
-              { role: :assistant, content: "Additional info" }, # No agent_name
-              { role: :user, content: "Continue" }
-            ]
-          }
+      it "handles missing agent_name gracefully" do
+        context = {
+          conversation_history: [
+            { role: :user, content: "Hello" },
+            { role: :assistant, content: "Hi", agent_name: nil }
+          ]
+        }
 
-          agent = runner.send(:determine_conversation_agent, context)
-          expect(agent).to eq(billing_agent) # Should use the attributed message
-        end
-
-        it "falls back to default when agent not found in registry" do
-          context = {
-            conversation_history: [
-              { role: :user, content: "Hello" },
-              { role: :assistant, content: "Hi", agent_name: "Nonexistent Agent" }
-            ]
-          }
-
-          agent = runner.send(:determine_conversation_agent, context)
-          expect(agent).to eq(triage_agent)
-        end
-
-        it "handles missing agent_name gracefully" do
-          context = {
-            conversation_history: [
-              { role: :user, content: "Hello" },
-              { role: :assistant, content: "Hi", agent_name: nil }
-            ]
-          }
-
-          agent = runner.send(:determine_conversation_agent, context)
-          expect(agent).to eq(triage_agent)
-        end
+        agent = runner.send(:determine_conversation_agent, context)
+        expect(agent).to eq(triage_agent)
       end
     end
   end
@@ -437,7 +431,7 @@ RSpec.describe Agents::AgentRunner do
       )
 
       # Run multiple threads concurrently
-      threads = 5.times.map do |i|
+      threads = Array.new(5) do |i|
         Thread.new do
           runner.run("Message #{i}")
         end
@@ -456,7 +450,7 @@ RSpec.describe Agents::AgentRunner do
       original_agents = runner.agents
 
       # Simulate concurrent access
-      threads = 3.times.map do
+      threads = Array.new(3) do
         Thread.new do
           # Access the private methods (simulating internal usage)
           runner.send(:determine_conversation_agent, {})
@@ -635,7 +629,7 @@ RSpec.describe Agents::AgentRunner do
         results = {}
         runners = []
 
-        threads = 3.times.map do |i|
+        threads = Array.new(3) do |i|
           Thread.new do
             local_runner = described_class.new([triage_agent])
             local_runner.on_tool_start { |_tool, _args| results[i] = "Thread #{i}" }
@@ -661,7 +655,7 @@ RSpec.describe Agents::AgentRunner do
         registered_callbacks = []
 
         # 10 threads concurrently registering callbacks on the same runner
-        threads = 10.times.map do |i|
+        threads = Array.new(10) do |i|
           Thread.new do
             callback = proc { |_tool, _args| "Callback #{i}" }
             runner.on_tool_start(&callback)

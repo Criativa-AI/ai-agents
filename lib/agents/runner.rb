@@ -84,137 +84,140 @@ module Agents
     # @param params [Hash, nil] Provider-specific parameters passed to the underlying LLM (e.g., service_tier)
     # @param callbacks [Hash] Optional callbacks for real-time event notifications
     # @return [RunResult] The result containing output, messages, and usage
-    def run(starting_agent, input, context: {}, registry: {}, max_turns: DEFAULT_MAX_TURNS, headers: nil, params: nil,
-            callbacks: {})
-      # The starting_agent is already determined by AgentRunner based on conversation history
-      current_agent = starting_agent
+    ExecutionState = Struct.new(:agent, :input, :context, :options, :chat, :turn, keyword_init: true)
+    RUN_DEFAULTS = { context: {}, registry: {}, max_turns: DEFAULT_MAX_TURNS, headers: nil, params: nil,
+                     callbacks: {}, limits: {}, execution_budget: nil }.freeze
 
-      # Create context wrapper with deep copy for thread safety
-      context_copy = deep_copy_context(context)
-      context_wrapper = RunContext.new(context_copy, callbacks: callbacks)
-      current_turn = 0
-
-      # Emit run start event
-      context_wrapper.callback_manager.emit_run_start(current_agent.name, input, context_wrapper)
-
-      runtime_headers = Helpers::HashNormalizer.normalize(headers, label: "headers")
-      agent_headers = Helpers::HashNormalizer.normalize(current_agent.headers, label: "headers")
-      runtime_params = Helpers::HashNormalizer.normalize(params, label: "params")
-      agent_params = Helpers::HashNormalizer.normalize(current_agent.params, label: "params")
-
-      # Create chat and restore conversation history
-      chat = RubyLLM::Chat.new(
-        model: current_agent.model,
-        provider: current_agent.provider,
-        assume_model_exists: current_agent.assume_model_exists
-      )
-      current_headers = Helpers::HashNormalizer.merge(agent_headers, runtime_headers)
-      current_params = Helpers::HashNormalizer.merge(agent_params, runtime_params)
-      apply_headers(chat, current_headers)
-      apply_params(chat, current_params)
-      configure_chat_for_agent(chat, current_agent, context_wrapper, replace: false)
-      restore_conversation_history(chat, context_wrapper)
-      input_already_in_history = last_message_matches?(chat, input)
-      context_wrapper.callback_manager.emit_chat_created(
-        chat, current_agent.name, current_agent.model, context_wrapper, current_agent.temperature
-      )
-
-      loop do
-        current_turn += 1
-        raise MaxTurnsExceeded, "Exceeded maximum turns: #{max_turns}" if current_turn > max_turns
-
-        # Get response from LLM (RubyLLM handles tool execution with halting based handoff detection)
-        message_count_before_response = chat_message_count(chat)
-        response = if current_turn == 1
-                     # Emit agent thinking event for initial message
-                     context_wrapper.callback_manager.emit_agent_thinking(current_agent.name, input, context_wrapper)
-                     # If conversation history already ends with this user message (e.g. passed
-                     # in via context from an external system), use complete to avoid duplicating it.
-                     input_already_in_history ? chat.complete : chat.ask(input)
-                   else
-                     # Emit agent thinking event for continuation
-                     context_wrapper.callback_manager.emit_agent_thinking(current_agent.name, "(continuing conversation)",
-                                                                          context_wrapper)
-                     chat.complete
-                   end
-        assign_agent_name_to_new_assistant_messages(chat, current_agent, message_count_before_response)
-        track_usage(response, context_wrapper)
-
-        # Emit LLM call complete event with model and response for instrumentation
-        context_wrapper.callback_manager.emit_llm_call_complete(
-          current_agent.name, current_agent.model, response, context_wrapper
-        )
-
-        # Check for handoff via RubyLLM's halt mechanism
-        if response.is_a?(RubyLLM::Tool::Halt) && context_wrapper.context[:pending_handoff]
-          handoff_info = context_wrapper.take_pending_handoff
-          next_agent = handoff_info[:target_agent]
-
-          # Validate that the target agent is in our registry
-          # This prevents handoffs to agents that weren't explicitly provided
-          unless registry[next_agent.name]
-            error = AgentNotFoundError.new("Handoff failed: Agent '#{next_agent.name}' not found in registry")
-            return finalize_run(chat, context_wrapper, current_agent, output: nil, error: error)
-          end
-
-          handoff_relationship(current_agent, next_agent)&.call_hook(context_wrapper, handoff_info)
-
-          # Save current conversation state before switching
-          save_conversation_state(chat, context_wrapper, current_agent)
-
-          # Emit agent complete event before handoff
-          context_wrapper.callback_manager.emit_agent_complete(current_agent.name, nil, nil, context_wrapper)
-
-          # Emit agent handoff event
-          context_wrapper.callback_manager.emit_agent_handoff(
-            current_agent.name,
-            next_agent.name,
-            handoff_info[:reason] || "handoff",
-            context_wrapper,
-            handoff_info[:metadata]
-          )
-
-          # Switch to new agent - store agent name for persistence
-          current_agent = next_agent
-          context_wrapper.context[:current_agent] = next_agent.name
-
-          # Reconfigure existing chat for new agent - preserves conversation history automatically
-          configure_chat_for_agent(chat, current_agent, context_wrapper, replace: true)
-          agent_headers = Helpers::HashNormalizer.normalize(current_agent.headers, label: "headers")
-          current_headers = Helpers::HashNormalizer.merge(agent_headers, runtime_headers)
-          apply_headers(chat, current_headers)
-          agent_params = Helpers::HashNormalizer.normalize(current_agent.params, label: "params")
-          current_params = Helpers::HashNormalizer.merge(agent_params, runtime_params)
-          apply_params(chat, current_params)
-          context_wrapper.callback_manager.emit_chat_created(
-            chat, current_agent.name, current_agent.model, context_wrapper, current_agent.temperature
-          )
-
-          # Force the new agent to respond to the conversation context
-          # This ensures the user gets a response from the new agent
-          input = nil
-          next
-        end
-
-        # Handle non-handoff halts - return the halt content as final response
-        if response.is_a?(RubyLLM::Tool::Halt)
-          return finalize_run(chat, context_wrapper, current_agent, output: response.content)
-        end
-
-        # If tools were called, continue the loop to let them execute
-        next if response.tool_call?
-
-        # If no tools were called, we have our final response
-        return finalize_run(chat, context_wrapper, current_agent, output: response.content)
-      end
+    def run(starting_agent, input, **options)
+      state = build_execution_state(starting_agent, input, options)
+      state.context.callback_manager.emit_run_start(starting_agent.name, input, state.context)
+      prepare_chat(state)
+      execute_turns(state)
     rescue MaxTurnsExceeded => e
-      finalize_run(chat, context_wrapper, current_agent,
-                   output: "Conversation ended: #{e.message}", error: e)
+      finalize_execution(state, output: "Conversation ended: #{e.message}", error: e)
     rescue StandardError => e
-      finalize_run(chat, context_wrapper, current_agent, output: nil, error: e)
+      raise unless state
+
+      finalize_execution(state, output: nil, error: e)
     end
 
     private
+
+    def build_execution_state(agent, input, options)
+      unknown = options.keys - RUN_DEFAULTS.keys
+      raise ArgumentError, "Unknown run options: #{unknown.join(", ")}" unless unknown.empty?
+
+      options = RUN_DEFAULTS.merge(options)
+      context = build_run_context(options)
+      context.context[:current_agent] = agent.name
+      ExecutionState.new(agent: agent, input: input, context: context, options: options, turn: 0)
+    end
+
+    def build_run_context(options)
+      budget = ExecutionBudget.new(**options[:limits], max_model_calls: options[:max_turns],
+                                                       parent: options[:execution_budget])
+      RunContext.new(deep_copy_context(options[:context]), callbacks: options[:callbacks], execution_budget: budget)
+    end
+
+    def prepare_chat(state)
+      agent = state.agent
+      state.chat = RuntimeChat.new(run_context: state.context, model: agent.model,
+                                   provider: agent.provider, assume_model_exists: agent.assume_model_exists)
+      apply_runtime_options(state)
+      configure_chat_for_agent(state.chat, state.agent, state.context, replace: false)
+      restore_conversation_history(state.chat, state.context)
+      emit_chat_created(state)
+    end
+
+    def execute_turns(state)
+      loop do
+        response = execute_turn(state)
+        if response.is_a?(RubyLLM::Tool::Halt) && state.context.handoff_pending?
+          switch_agent(state)
+          next
+        end
+        next if !response.is_a?(RubyLLM::Tool::Halt) && response.tool_call?
+
+        return finalize_execution(state, output: response.content)
+      end
+    end
+
+    def execute_turn(state)
+      state.turn += 1
+      max_turns = state.options[:max_turns]
+      raise MaxTurnsExceeded, "Exceeded maximum turns: #{max_turns}" if state.turn > max_turns
+
+      count = chat_message_count(state.chat)
+      emit_agent_thinking(state)
+      response = request_response(state)
+      assign_agent_name_to_new_assistant_messages(state.chat, state.agent, count)
+      response
+    end
+
+    def emit_agent_thinking(state)
+      input = state.turn == 1 ? state.input : "(continuing conversation)"
+      state.context.callback_manager.emit_agent_thinking(state.agent.name, input, state.context)
+    end
+
+    def request_response(state)
+      if state.turn == 1 && !last_message_matches?(state.chat, state.input)
+        state.chat.ask(state.input)
+      else
+        state.chat.complete
+      end
+    end
+
+    def switch_agent(state)
+      handoff = state.context.take_pending_handoff
+      target = handoff[:target_agent]
+      unless state.options[:registry][target.name]
+        raise AgentNotFoundError, "Handoff failed: Agent '#{target.name}' not found in registry"
+      end
+
+      complete_handoff(state, target, handoff)
+      state.agent = target
+      configure_handoff_chat(state)
+    end
+
+    def configure_handoff_chat(state)
+      state.context.context[:current_agent] = state.agent.name
+      configure_chat_for_agent(state.chat, state.agent, state.context, replace: true)
+      apply_runtime_options(state)
+      emit_chat_created(state)
+    end
+
+    def complete_handoff(state, target, handoff)
+      agent = state.agent
+      context = state.context
+      handoff_relationship(agent, target)&.call_hook(context, handoff)
+      save_conversation_state(state.chat, context, agent)
+      callbacks = context.callback_manager
+      callbacks.emit_agent_complete(agent.name, nil, nil, context)
+      callbacks.emit_agent_handoff(agent.name, target.name, handoff[:reason] || "handoff", context, handoff[:metadata])
+    end
+
+    def apply_runtime_options(state)
+      headers = merged_option(state, :headers)
+      params = merged_option(state, :params)
+      apply_headers(state.chat, headers)
+      apply_params(state.chat, params)
+    end
+
+    def merged_option(state, key)
+      agent_value = Helpers::HashNormalizer.normalize(state.agent.public_send(key), label: key.to_s)
+      runtime_value = Helpers::HashNormalizer.normalize(state.options[key], label: key.to_s)
+      Helpers::HashNormalizer.merge(agent_value, runtime_value)
+    end
+
+    def emit_chat_created(state)
+      state.context.callback_manager.emit_chat_created(
+        state.chat, state.agent.name, state.agent.model, state.context, state.agent.temperature
+      )
+    end
+
+    def finalize_execution(state, **result)
+      finalize_run(state.chat, state.context, state.agent, **result)
+    end
 
     # Saves conversation state, builds a RunResult, emits completion callbacks, and returns it.
     # Centralises the finalize-and-return pattern used by the normal path, halt path, and error rescues.
@@ -227,6 +230,7 @@ module Agents
     # @return [RunResult]
     def finalize_run(chat, context_wrapper, current_agent, output:, error: nil)
       save_conversation_state(chat, context_wrapper, current_agent) if chat
+      context_wrapper.context[:execution_counts] = context_wrapper.execution_budget.snapshot
 
       result = RunResult.new(
         output: output,
@@ -270,12 +274,7 @@ module Agents
       history.each do |msg|
         next unless restorable_message?(msg)
 
-        if msg[:role].to_sym == :tool &&
-           msg[:tool_call_id] &&
-           !valid_tool_call_ids.include?(msg[:tool_call_id])
-          Agents.logger&.warn("Skipping tool message without matching assistant tool_call_id #{msg[:tool_call_id]}")
-          next
-        end
+        next if orphan_tool_message?(msg, valid_tool_call_ids)
 
         message_params = build_message_params(msg)
         next unless message_params # Skip invalid messages
@@ -284,10 +283,16 @@ module Agents
         assign_restored_agent_name(message, msg)
         chat.add_message(message)
 
-        if message.role == :assistant && message_params[:tool_calls]
-          valid_tool_call_ids.merge(message_params[:tool_calls].keys)
-        end
+        valid_tool_call_ids.merge(message_params.fetch(:tool_calls, {}).keys) if message.role == :assistant
       end
+    end
+
+    def orphan_tool_message?(msg, valid_tool_call_ids)
+      return false unless msg[:role].to_sym == :tool && msg[:tool_call_id]
+      return false if valid_tool_call_ids.include?(msg[:tool_call_id])
+
+      Agents.logger&.warn("Skipping tool message without matching assistant tool_call_id #{msg[:tool_call_id]}")
+      true
     end
 
     # Check if a message should be restored
@@ -306,43 +311,33 @@ module Agents
     # Build message parameters for restoration
     def build_message_params(msg)
       role = msg[:role].to_sym
+      return nil if role == :tool && !valid_tool_message?(msg)
 
-      content_value = msg[:content]
-      # Assistant tool-call messages may have empty text, but still need placeholder content
-      content_value = "" if content_value.nil? && role == :assistant && msg[:tool_calls]&.any?
-
-      params = {
-        role: role,
-        content: build_content(content_value)
-      }
-
-      # Handle tool-specific parameters (Tool Results)
-      if role == :tool
-        return nil unless valid_tool_message?(msg)
-
-        params[:tool_call_id] = msg[:tool_call_id]
-      end
-
-      # FIX: Restore tool_calls on assistant messages
-      # This is required by OpenAI/Anthropic API contracts to link
-      # subsequent tool result messages back to this request.
-      if role == :assistant && msg[:tool_calls] && !msg[:tool_calls].empty?
-        # Convert stored array of hashes back into the Hash format RubyLLM expects
-        # RubyLLM stores tool_calls as: { call_id => ToolCall_object, ... }
-        # Reference: openai/tools.rb:35 uses hash iteration |_, tc|
-        params[:tool_calls] = msg[:tool_calls].each_with_object({}) do |tc, hash|
-          tool_call_id = tc[:id] || tc["id"]
-          next unless tool_call_id
-
-          hash[tool_call_id] = RubyLLM::ToolCall.new(
-            id: tool_call_id,
-            name: tc[:name] || tc["name"],
-            arguments: tc[:arguments] || tc["arguments"] || {}
-          )
-        end
-      end
-
+      params = { role: role, content: build_content(restored_content(msg)) }
+      params[:tool_call_id] = msg[:tool_call_id] if role == :tool
+      params[:tool_calls] = restored_tool_calls(msg[:tool_calls]) if assistant_tool_calls?(msg)
       params
+    end
+
+    def assistant_tool_calls?(msg)
+      msg[:role].to_sym == :assistant && msg[:tool_calls] && !msg[:tool_calls].empty?
+    end
+
+    def restored_content(msg)
+      # Assistant tool-call messages need placeholder content when text is absent.
+      return "" if msg[:content].nil? && assistant_tool_calls?(msg)
+
+      msg[:content]
+    end
+
+    def restored_tool_calls(tool_calls)
+      tool_calls.each_with_object({}) do |tool_call, result|
+        id = tool_call[:id] || tool_call["id"]
+        next unless id
+
+        result[id] = RubyLLM::ToolCall.new(id: id, name: tool_call[:name] || tool_call["name"],
+                                           arguments: tool_call[:arguments] || tool_call["arguments"] || {})
+      end
     end
 
     # Normalize stored content for RubyLLM, preserving prebuilt content and handling multimodal arrays.
@@ -351,17 +346,27 @@ module Agents
       return content_value if content_value.is_a?(RubyLLM::Content)
       return RubyLLM::Content.new(content_value) unless content_value.is_a?(Array)
 
-      text_parts = content_value.filter_map { |p| p[:text] || p["text"] if (p[:type] || p["type"]) == "text" }
-      image_urls = content_value.filter_map do |p|
-        next unless (p[:type] || p["type"]) == "image_url"
-
-        p.dig(:image_url, :url) || p.dig("image_url", "url")
-      end
+      text_parts = text_parts(content_value)
+      image_urls = image_urls(content_value)
 
       return RubyLLM::Content.new(content_value.to_json) if text_parts.empty? && image_urls.empty?
 
       text = text_parts.join(" ")
       image_urls.any? ? RubyLLM::Content.new(text, image_urls) : RubyLLM::Content.new(text)
+    end
+
+    def text_parts(content)
+      content_parts(content, "text").filter_map { |part| part[:text] || part["text"] }
+    end
+
+    def image_urls(content)
+      content_parts(content, "image_url").filter_map do |part|
+        part.dig(:image_url, :url) || part.dig("image_url", "url")
+      end
+    end
+
+    def content_parts(content, type)
+      content.select { |part| (part[:type] || part["type"]) == type }
     end
 
     # Validate tool message has required tool_call_id
@@ -388,7 +393,7 @@ module Agents
       context_wrapper.context[:conversation_history] = messages
       context_wrapper.context[:current_agent] = current_agent.name
       context_wrapper.context[:turn_count] = (context_wrapper.context[:turn_count] || 0) + 1
-      context_wrapper.context[:last_updated] = Time.now
+      context_wrapper.context[:last_updated] = Time.now.getlocal
 
       # Clean up temporary handoff state
       context_wrapper.clear_pending_handoff
@@ -479,12 +484,6 @@ module Agents
       return if params.empty?
 
       chat.with_params(**params)
-    end
-
-    def track_usage(response, context_wrapper)
-      return unless context_wrapper&.usage
-
-      context_wrapper.usage.add(response)
     end
 
     # Builds thread-safe tool wrappers for an agent's tools and handoff tools.

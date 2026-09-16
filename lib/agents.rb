@@ -8,6 +8,7 @@
 require "ruby_llm"
 require_relative "agents/version"
 
+# Configuration and execution primitives for multi-agent conversations.
 module Agents
   class Error < StandardError; end
 
@@ -83,6 +84,7 @@ module Agents
     end
   end
 
+  # Provider credentials and defaults shared by agent executions.
   class Configuration
     # Provider API keys and configuration
     attr_accessor :openai_api_key, :openai_api_base, :openai_organization_id, :openai_project_id
@@ -102,15 +104,16 @@ module Agents
     # Check if at least one provider is configured
     # @return [Boolean] True if any provider has an API key
     def configured?
-      @openai_api_key || @anthropic_api_key || @gemini_api_key ||
-        @deepseek_api_key || @openrouter_api_key || @ollama_api_base ||
-        @bedrock_api_key || (@azure_api_base && (@azure_api_key || @azure_ai_auth_token))
+      credentials = [@openai_api_key, @anthropic_api_key, @gemini_api_key, @deepseek_api_key,
+                     @openrouter_api_key, @ollama_api_base, @bedrock_api_key]
+      credentials.find { |value| value } || (@azure_api_base && (@azure_api_key || @azure_ai_auth_token))
     end
   end
 end
 
 # Core components
 require_relative "agents/result"
+require_relative "agents/execution_budget"
 require_relative "agents/run_context"
 require_relative "agents/tool_context"
 require_relative "agents/tool"
@@ -122,5 +125,6 @@ require_relative "agents/agent"
 require_relative "agents/tool_wrapper"
 require_relative "agents/callback_manager"
 require_relative "agents/agent_runner"
+require_relative "agents/runtime_chat"
 require_relative "agents/runner"
 require_relative "agents/agent_tool"

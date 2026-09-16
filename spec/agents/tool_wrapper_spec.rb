@@ -5,7 +5,9 @@ require_relative "../../lib/agents"
 RSpec.describe Agents::ToolWrapper do
   let(:tool) { Agents::Tool.new }
   let(:callback_manager) { instance_double(Agents::CallbackManager) }
-  let(:context_wrapper) { instance_double(Agents::RunContext, callback_manager: callback_manager) }
+  let(:context_wrapper) do
+    instance_double(Agents::RunContext, callback_manager: callback_manager, handoff_pending?: false)
+  end
   let(:tool_wrapper) { described_class.new(tool, context_wrapper) }
 
   before do
