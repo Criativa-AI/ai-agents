@@ -58,3 +58,17 @@ on undercounted totals must update their expectations.
 
 This change does not provide durable task state, external-operation deduplication,
 business-result validation, or proof that a human has taken over a conversation.
+
+## Compatibility and nested observations
+
+This release requires RubyLLM 1.15.0, the version verified by the fork and Captain.
+RubyLLM 1.14 lacks the public admission hooks used by RuntimeChat.
+
+Agent tools bridge `llm_call_complete` and `chat_created` to the owning run.
+Observers receive the child's agent/model/response (or chat), with the owning
+RunContext for correlation. Chat observers can install message hooks on child
+chats, including the SDK tracing adapter. Child conversation history remains
+isolated. Child lifecycle and tool callbacks are not replayed into the parent's
+lifecycle: doing so could close its root span or overwrite its active tool.
+Nested usage is added once to the aggregate result; completion events report
+each response once, including responses before budget exhaustion.

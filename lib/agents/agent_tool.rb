@@ -91,14 +91,28 @@ module Agents
         context: create_isolated_context(tool_context.context),
         registry: {}, # No handoffs allowed inside an agent tool.
         max_turns: 3,
-        execution_budget: run_context.execution_budget
+        execution_budget: run_context.execution_budget,
+        callbacks: nested_callbacks(run_context)
       )
-      run_context.usage.add(result.usage) if result.usage
+      run_context.usage.add(result.usage)
       if result.error.is_a?(ExecutionBudget::Exceeded) || result.error.is_a?(Runner::MaxTurnsExceeded)
         raise result.error
       end
 
       result
+    end
+
+    # Bridge model observations to the owning run without replaying lifecycle or
+    # tool events that would close its spans or overwrite its active tool state.
+    def nested_callbacks(parent_context)
+      {
+        llm_call_complete: [lambda do |agent, model, response, _child_context|
+          parent_context.callback_manager.emit_llm_call_complete(agent, model, response, parent_context)
+        end],
+        chat_created: [lambda do |chat, agent, model, _child_context, temperature|
+          parent_context.callback_manager.emit_chat_created(chat, agent, model, parent_context, temperature)
+        end]
+      }
     end
 
     def transform_agent_name(name)

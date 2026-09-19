@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "set"
-
 module Agents
   # The execution engine that orchestrates conversations between users and agents.
   # Runner manages the conversation flow, handles tool execution through RubyLLM,

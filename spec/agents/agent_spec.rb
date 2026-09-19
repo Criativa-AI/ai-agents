@@ -11,47 +11,27 @@ RSpec.describe Agents::Agent do
     it "creates agent with required name parameter" do
       agent = described_class.new(name: "Test Agent")
 
-      expect(agent.name).to eq("Test Agent")
-      expect(agent.instructions).to be_nil
-      expect(agent.model).to eq("gpt-4.1-mini")
-      expect(agent.provider).to be_nil
-      expect(agent.assume_model_exists).to be false
-      expect(agent.tools).to eq([])
-      expect(agent.handoff_agents).to eq([])
-      expect(agent.temperature).to eq(0.7)
-      expect(agent.headers).to eq({})
+      expect(agent).to have_attributes(
+        name: "Test Agent", instructions: nil, model: "gpt-4.1-mini", provider: nil,
+        assume_model_exists: false, tools: [], handoff_agents: [], temperature: 0.7, headers: {}
+      )
       expect(agent.headers).to be_frozen
       expect(agent.params).to eq({})
       expect(agent.params).to be_frozen
     end
 
     it "creates agent with all parameters" do
-      instructions = "You are a test agent"
-      tools = [test_tool]
-      handoff_agents = [other_agent]
       headers = { "X-Test" => "value" }
-
       agent = described_class.new(
-        name: "Test Agent",
-        instructions: instructions,
-        model: "gpt-4o",
-        provider: :azure,
-        assume_model_exists: true,
-        tools: tools,
-        handoff_agents: handoff_agents,
-        temperature: 0.9,
-        headers: headers
+        name: "Test Agent", instructions: "You are a test agent", model: "gpt-4o", provider: :azure,
+        assume_model_exists: true, tools: [test_tool], handoff_agents: [other_agent], temperature: 0.9, headers: headers
       )
 
-      expect(agent.name).to eq("Test Agent")
-      expect(agent.instructions).to eq(instructions)
-      expect(agent.model).to eq("gpt-4o")
-      expect(agent.provider).to eq(:azure)
-      expect(agent.assume_model_exists).to be true
-      expect(agent.tools).to eq(tools)
+      expect(agent).to have_attributes(
+        name: "Test Agent", instructions: "You are a test agent", model: "gpt-4o", provider: :azure,
+        assume_model_exists: true, tools: [test_tool], temperature: 0.9, headers: { "X-Test": "value" }
+      )
       expect(agent.handoff_agents).to include(other_agent)
-      expect(agent.temperature).to eq(0.9)
-      expect(agent.headers).to eq("X-Test": "value")
       expect(agent.headers).not_to be(headers)
       expect(agent.headers).to be_frozen
     end
@@ -152,7 +132,7 @@ RSpec.describe Agents::Agent do
     end
 
     it "is thread-safe with concurrent registrations" do
-      agents = 10.times.map { instance_double(described_class, "Agent#{_1}") }
+      agents = Array.new(10) { instance_double(described_class, "Agent#{_1}") }
 
       threads = agents.map do |test_agent|
         Thread.new { agent.register_handoffs(test_agent) }
@@ -500,7 +480,7 @@ RSpec.describe Agents::Agent do
       end
     end
 
-    context "integration test" do
+    context "with an executable agent tool" do
       let(:test_agent) do
         described_class.new(
           name: "Echo Agent",
@@ -514,23 +494,28 @@ RSpec.describe Agents::Agent do
         Agents::ToolContext.new(run_context: run_context)
       end
 
+      let(:mock_runner) { instance_double(Agents::Runner) }
+      # Mock the underlying runner to avoid actual LLM calls
+      let(:mock_result) do
+        instance_double(
+          Agents::RunResult,
+          usage: Agents::RunContext::Usage.new,
+          output: "Echoed: test input",
+          error: nil
+        )
+      end
+
+      before do
+        allow(Agents::Runner).to receive(:new).and_return(mock_runner)
+        allow(mock_runner).to receive(:run).and_return(mock_result)
+      end
+
       it "creates a functional tool that can be executed" do
         tool = test_agent.as_tool(name: "echo_tool")
 
         expect(tool).to respond_to(:perform)
         expect(tool).to respond_to(:execute)
         expect(tool.name).to eq("echo_tool")
-
-        # Mock the underlying runner to avoid actual LLM calls
-        mock_runner = instance_double(Agents::Runner)
-        mock_result = instance_double(
-          Agents::RunResult,
-          output: "Echoed: test input",
-          error: nil
-        )
-
-        allow(Agents::Runner).to receive(:new).and_return(mock_runner)
-        allow(mock_runner).to receive(:run).and_return(mock_result)
 
         result = tool.perform(tool_context, input: "test input")
 
@@ -540,7 +525,9 @@ RSpec.describe Agents::Agent do
           "test input",
           context: { state: { test: true } },
           registry: {},
-          max_turns: 3
+          max_turns: 3,
+          execution_budget: tool_context.run_context.execution_budget,
+          callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
         )
       end
     end

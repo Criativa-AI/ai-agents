@@ -86,7 +86,8 @@ RSpec.describe Agents::AgentTool do
         context: { state: { user_id: 123 } },
         registry: {},
         max_turns: 3,
-        execution_budget: kind_of(Agents::ExecutionBudget)
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
       expect(result).to eq("Test response")
     end
@@ -109,7 +110,8 @@ RSpec.describe Agents::AgentTool do
         context: { state: { user_id: 123, name: "John" } },
         registry: {},
         max_turns: 3,
-        execution_budget: kind_of(Agents::ExecutionBudget)
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
     end
 
@@ -125,7 +127,8 @@ RSpec.describe Agents::AgentTool do
         context: {},
         registry: {},
         max_turns: 3,
-        execution_budget: kind_of(Agents::ExecutionBudget)
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
     end
 
