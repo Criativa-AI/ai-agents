@@ -65,6 +65,7 @@ RSpec.describe Agents::AgentTool do
     let(:mock_result) do
       instance_double(
         Agents::RunResult,
+        usage: nil,
         output: "Test response",
         error: nil
       )
@@ -84,7 +85,9 @@ RSpec.describe Agents::AgentTool do
         "Test input",
         context: { state: { user_id: 123 } },
         registry: {},
-        max_turns: 3
+        max_turns: 3,
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
       expect(result).to eq("Test response")
     end
@@ -106,7 +109,9 @@ RSpec.describe Agents::AgentTool do
         "Test",
         context: { state: { user_id: 123, name: "John" } },
         registry: {},
-        max_turns: 3
+        max_turns: 3,
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
     end
 
@@ -121,13 +126,16 @@ RSpec.describe Agents::AgentTool do
         "Test",
         context: {},
         registry: {},
-        max_turns: 3
+        max_turns: 3,
+        execution_budget: kind_of(Agents::ExecutionBudget),
+        callbacks: hash_including(llm_call_complete: kind_of(Array), chat_created: kind_of(Array))
       )
     end
 
     it "returns error message when agent execution fails" do
       error_result = instance_double(
         Agents::RunResult,
+        usage: nil,
         output: nil,
         error: StandardError.new("Something went wrong")
       )
@@ -141,6 +149,7 @@ RSpec.describe Agents::AgentTool do
     it "returns fallback message when agent returns no output" do
       no_output_result = instance_double(
         Agents::RunResult,
+        usage: nil,
         output: nil,
         error: nil
       )

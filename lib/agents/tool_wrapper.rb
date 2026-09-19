@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "forwardable"
+
 module Agents
   # A thread-safe wrapper that bridges RubyLLM's tool execution with our context injection pattern.
   # This wrapper solves a critical problem: RubyLLM calls tools with just the LLM-provided
@@ -33,6 +35,10 @@ module Agents
   #
   # This ensures each execution has its own context without any shared mutable state.
   class ToolWrapper
+    extend Forwardable
+
+    def_delegator :@tool, :parameters
+
     def initialize(tool, context_wrapper)
       @tool = tool
       @context_wrapper = context_wrapper
@@ -45,6 +51,8 @@ module Agents
 
     # RubyLLM calls this method (follows RubyLLM::Tool pattern)
     def call(args)
+      return "Tool not executed: a handoff is already pending." if @context_wrapper.handoff_pending?
+
       tool_context = ToolContext.new(run_context: @context_wrapper)
 
       @context_wrapper.callback_manager.emit_tool_start(@tool.name, args, @context_wrapper)
@@ -66,11 +74,6 @@ module Agents
 
     def description
       @description || @tool.description
-    end
-
-    # RubyLLM calls this to get parameter definitions
-    def parameters
-      @tool.parameters
     end
 
     # Expose params schema for RubyLLM providers that expect it

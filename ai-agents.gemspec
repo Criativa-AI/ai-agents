@@ -9,7 +9,8 @@ Gem::Specification.new do |spec|
   spec.email = ["scm.mymail@gmail.com"]
 
   spec.summary = "A Ruby SDK for building sophisticated multi-agent AI workflows"
-  spec.description = "Ruby AI Agents SDK enables creating complex AI workflows with multi-agent orchestration, tool execution, safety guardrails, and provider-agnostic LLM integration."
+  spec.description = "Ruby AI Agents SDK enables creating complex AI workflows with multi-agent orchestration, " \
+                     "tool execution, safety guardrails, and provider-agnostic LLM integration."
   spec.homepage = "https://chatwoot.com/ai-agents"
   spec.required_ruby_version = ">= 3.2.0"
 
@@ -31,7 +32,7 @@ Gem::Specification.new do |spec|
   spec.require_paths = ["lib"]
 
   # Core dependencies
-  spec.add_dependency "ruby_llm", "~> 1.14"
+  spec.add_dependency "ruby_llm", "= 1.15.0"
 
   # For more information and examples about making a new gem, check out our
   # guide at: https://bundler.io/guides/creating_gem.html

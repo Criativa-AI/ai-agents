@@ -68,7 +68,11 @@ module Agents
     # @param headers [Hash, nil] Custom HTTP headers to pass through to the underlying LLM provider
     # @param params [Hash, nil] Provider-specific parameters to pass through to the underlying LLM (e.g., service_tier)
     # @return [RunResult] Execution result with output, messages, and updated context
-    def run(input, context: {}, max_turns: Runner::DEFAULT_MAX_TURNS, headers: nil, params: nil)
+    def run(input, context: {}, **options)
+      unknown = options.keys - %i[max_turns headers params limits]
+      raise ArgumentError, "Unknown run options: #{unknown.join(", ")}" unless unknown.empty?
+
+      options = { max_turns: Runner::DEFAULT_MAX_TURNS, headers: nil, params: nil, limits: {} }.merge(options)
       # Determine which agent should handle this conversation
       # Uses conversation history to maintain continuity across handoffs
       current_agent = determine_conversation_agent(context)
@@ -77,11 +81,9 @@ module Agents
       Runner.new.run(
         current_agent,
         input,
+        **options,
         context: context,
         registry: @registry,
-        max_turns: max_turns,
-        headers: headers,
-        params: params,
         callbacks: @callbacks
       )
     end
@@ -233,11 +235,7 @@ module Agents
 
       # Try to resolve from registry, fall back to default if agent not found
       # This handles cases where agent names in history don't match current registry
-      if last_agent_name && @registry[last_agent_name]
-        @registry[last_agent_name]
-      else
-        @default_agent
-      end
+      @registry[last_agent_name] || @default_agent
     end
   end
 end
