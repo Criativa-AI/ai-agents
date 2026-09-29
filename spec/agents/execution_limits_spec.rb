@@ -160,6 +160,35 @@ RSpec.describe Agents::Runner do
     expect(effects).to eq(["completed"])
   end
 
+  it "stops before the provider and tools when required chat preparation fails" do
+    request = stub_chat_sequence(tool_response, "Done")
+    runner = described_class.with_agents(agent)
+    runner.on_chat_prepare { raise "control could not be installed" }
+
+    result = runner.run("Help")
+
+    expect(result.error).to be_a(Agents::CallbackManager::RequiredCallbackFailed)
+    expect(request).not_to have_been_requested
+    expect(effects).to be_empty
+    expect(result.context[:execution_counts]).to include(model_calls: 0, tool_calls: 0)
+  end
+
+  it "propagates a required preparation failure from a nested agent tool" do
+    child = Agents::Agent.new(name: "Child", model: "gpt-4o", tools: [tool])
+    parent = Agents::Agent.new(name: "Parent", model: "gpt-4o", tools: [child.as_tool])
+    request = stub_chat_sequence({ tool_calls: [{ name: "child", arguments: { input: "Help" } }] }, tool_response)
+    runner = described_class.with_agents(parent)
+    runner.on_chat_prepare do |_chat, agent_name|
+      raise "child control unavailable" if agent_name == "Child"
+    end
+
+    result = runner.run("Help")
+
+    expect(result.error).to be_a(Agents::CallbackManager::RequiredCallbackFailed)
+    expect(request).to have_been_requested.once
+    expect(effects).to be_empty
+  end
+
   it "does not reset the caller budget inside an agent tool" do
     child = Agents::Agent.new(name: "Child", model: "gpt-4o", tools: [tool])
     parent = Agents::Agent.new(name: "Parent", model: "gpt-4o", tools: [child.as_tool])

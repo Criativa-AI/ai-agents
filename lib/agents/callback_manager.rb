@@ -11,6 +11,8 @@ module Agents
   #   manager.emit_tool_start(tool_name, args)
   #   manager.emit_agent_thinking(agent_name, input)
   class CallbackManager
+    class RequiredCallbackFailed < StandardError; end
+
     # Supported callback event types
     EVENT_TYPES = %i[
       run_start
@@ -47,6 +49,14 @@ module Agents
         # Log callback errors but don't let them crash execution
         warn "Callback error for #{event_type}: #{e.message}"
       end
+    end
+
+    def emit_chat_prepare(*args)
+      (@callbacks[:chat_prepare] || []).each do |callback|
+        callback.call(*arity_safe_args(callback, args))
+      end
+    rescue StandardError => e
+      raise RequiredCallbackFailed, "Required chat preparation failed", cause: e
     end
 
     # Metaprogramming: Create typed emit methods for each event type

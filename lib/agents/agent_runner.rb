@@ -54,6 +54,7 @@ module Agents
         agent_thinking: [],
         agent_handoff: [],
         llm_call_complete: [],
+        chat_prepare: [],
         chat_created: []
       }
     end
@@ -196,6 +197,15 @@ module Agents
       return self unless block
 
       @callbacks_mutex.synchronize { @callbacks[:chat_created] << block }
+      self
+    end
+
+    # Install controls required for safe execution before the provider is called.
+    # Unlike observational callbacks, failures stop the run.
+    def on_chat_prepare(&block)
+      return self unless block
+
+      @callbacks_mutex.synchronize { @callbacks[:chat_prepare] << block }
       self
     end
 

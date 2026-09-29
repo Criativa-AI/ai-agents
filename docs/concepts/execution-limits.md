@@ -37,6 +37,14 @@ execution. Limits use monotonic elapsed time, not wall-clock dates.
 - Observability callback failures cannot disable the budget. Admission checks
   are installed by the runtime, separately from best-effort callbacks.
 
+Applications that must install additional admission controls can register
+`runner.on_chat_prepare { |chat, agent_name, model, run_context| ... }`. This runs
+after chat configuration and before the first provider request, including on
+child agent chats. A failure returns `CallbackManager::RequiredCallbackFailed`
+in `result.error`, with the original exception as its cause. No provider call or
+tool action starts when preparation fails. Use `on_chat_created` for optional
+observability; its errors remain isolated from the execution.
+
 ## Network and deadline semantics
 
 The runtime uses an isolated RubyLLM context with transport retries disabled.

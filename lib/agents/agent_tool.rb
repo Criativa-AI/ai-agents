@@ -76,7 +76,7 @@ module Agents
       else
         result.output || "No output from #{@wrapped_agent.name}"
       end
-    rescue ExecutionBudget::Exceeded, Runner::MaxTurnsExceeded
+    rescue ExecutionBudget::Exceeded, Runner::MaxTurnsExceeded, CallbackManager::RequiredCallbackFailed
       raise
     rescue StandardError => e
       "Error executing #{@wrapped_agent.name}: #{e.message}"
@@ -95,17 +95,23 @@ module Agents
         callbacks: nested_callbacks(run_context)
       )
       run_context.usage.add(result.usage)
-      if result.error.is_a?(ExecutionBudget::Exceeded) || result.error.is_a?(Runner::MaxTurnsExceeded)
-        raise result.error
-      end
+      raise_control_error!(result.error)
 
       result
+    end
+
+    def raise_control_error!(error)
+      raise error if error.is_a?(ExecutionBudget::Exceeded) || error.is_a?(Runner::MaxTurnsExceeded) ||
+                     error.is_a?(CallbackManager::RequiredCallbackFailed)
     end
 
     # Bridge model observations to the owning run without replaying lifecycle or
     # tool events that would close its spans or overwrite its active tool state.
     def nested_callbacks(parent_context)
       {
+        chat_prepare: [lambda do |chat, agent, model, child_context, temperature|
+          parent_context.callback_manager.emit_chat_prepare(chat, agent, model, child_context, temperature)
+        end],
         llm_call_complete: [lambda do |agent, model, response, _child_context|
           parent_context.callback_manager.emit_llm_call_complete(agent, model, response, parent_context)
         end],

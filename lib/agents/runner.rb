@@ -208,7 +208,14 @@ module Agents
     end
 
     def emit_chat_created(state)
+      emit_chat_prepare(state)
       state.context.callback_manager.emit_chat_created(
+        state.chat, state.agent.name, state.agent.model, state.context, state.agent.temperature
+      )
+    end
+
+    def emit_chat_prepare(state)
+      state.context.callback_manager.emit_chat_prepare(
         state.chat, state.agent.name, state.agent.model, state.context, state.agent.temperature
       )
     end
