@@ -52,11 +52,11 @@ module Agents
     end
 
     def emit_chat_prepare(*args)
-      (@callbacks[:chat_prepare] || []).each do |callback|
-        callback.call(*arity_safe_args(callback, args))
-      end
-    rescue StandardError => e
-      raise RequiredCallbackFailed, "Required chat preparation failed", cause: e
+      emit_required(:chat_prepare, *args)
+    end
+
+    def emit_model_call_prepare(*args)
+      emit_required(:model_call_prepare, *args)
     end
 
     # Metaprogramming: Create typed emit methods for each event type
@@ -73,6 +73,14 @@ module Agents
     end
 
     private
+
+    def emit_required(event_type, *args)
+      (@callbacks[event_type] || []).each do |callback|
+        callback.call(*arity_safe_args(callback, args))
+      end
+    rescue StandardError => e
+      raise RequiredCallbackFailed, "Required #{event_type} failed", cause: e
+    end
 
     # Returns args sliced to fit the callback's accepted parameter count.
     #

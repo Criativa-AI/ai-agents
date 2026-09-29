@@ -55,6 +55,7 @@ module Agents
         agent_handoff: [],
         llm_call_complete: [],
         chat_prepare: [],
+        model_call_prepare: [],
         chat_created: []
       }
     end
@@ -206,6 +207,14 @@ module Agents
       return self unless block
 
       @callbacks_mutex.synchronize { @callbacks[:chat_prepare] << block }
+      self
+    end
+
+    # Recheck required controls before every model request, including tool continuations.
+    def on_model_call_prepare(&block)
+      return self unless block
+
+      @callbacks_mutex.synchronize { @callbacks[:model_call_prepare] << block }
       self
     end
 

@@ -189,6 +189,22 @@ RSpec.describe Agents::Runner do
     expect(effects).to be_empty
   end
 
+  it "checks required eligibility again before a model continuation" do
+    request = stub_chat_sequence(tool_response, "Unreachable")
+    runner = described_class.with_agents(agent)
+    calls = 0
+    runner.on_model_call_prepare do
+      calls += 1
+      raise "execution cancelled" if calls > 1
+    end
+
+    result = runner.run("Help")
+
+    expect(result.error).to be_a(Agents::CallbackManager::RequiredCallbackFailed)
+    expect(request).to have_been_requested.once
+    expect(effects).to eq(["completed"])
+  end
+
   it "does not reset the caller budget inside an agent tool" do
     child = Agents::Agent.new(name: "Child", model: "gpt-4o", tools: [tool])
     parent = Agents::Agent.new(name: "Parent", model: "gpt-4o", tools: [child.as_tool])

@@ -618,6 +618,7 @@ RSpec.describe Agents::AgentRunner do
               agent_handoff: [],
               llm_call_complete: [],
               chat_prepare: [],
+              model_call_prepare: [],
               chat_created: []
             }
           )

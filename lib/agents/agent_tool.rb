@@ -108,15 +108,23 @@ module Agents
     # Bridge model observations to the owning run without replaying lifecycle or
     # tool events that would close its spans or overwrite its active tool state.
     def nested_callbacks(parent_context)
-      {
-        chat_prepare: [lambda do |chat, agent, model, child_context, temperature|
-          parent_context.callback_manager.emit_chat_prepare(chat, agent, model, child_context, temperature)
-        end],
+      required_nested_callbacks(parent_context).merge(
         llm_call_complete: [lambda do |agent, model, response, _child_context|
           parent_context.callback_manager.emit_llm_call_complete(agent, model, response, parent_context)
         end],
         chat_created: [lambda do |chat, agent, model, _child_context, temperature|
           parent_context.callback_manager.emit_chat_created(chat, agent, model, parent_context, temperature)
+        end]
+      )
+    end
+
+    def required_nested_callbacks(parent_context)
+      {
+        chat_prepare: [lambda do |chat, agent, model, child_context, temperature|
+          parent_context.callback_manager.emit_chat_prepare(chat, agent, model, child_context, temperature)
+        end],
+        model_call_prepare: [lambda do |child_context|
+          parent_context.callback_manager.emit_model_call_prepare(child_context)
         end]
       }
     end

@@ -15,6 +15,7 @@ module Agents
     end
 
     def complete(&)
+      @run_context.callback_manager.emit_model_call_prepare(@run_context)
       @run_context.execution_budget.consume!(:model_calls)
       response = super
       @run_context.execution_budget.check_duration!

@@ -44,6 +44,9 @@ child agent chats. A failure returns `CallbackManager::RequiredCallbackFailed`
 in `result.error`, with the original exception as its cause. No provider call or
 tool action starts when preparation fails. Use `on_chat_created` for optional
 observability; its errors remain isolated from the execution.
+Register `runner.on_model_call_prepare { |run_context| ... }` to recheck required
+eligibility before each provider request, including continuations after tools.
+Failures use the same required callback error and stop that request.
 
 ## Network and deadline semantics
 
