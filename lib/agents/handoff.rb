@@ -118,7 +118,7 @@ module Agents
       @tool_description
     end
 
-    # Use RubyLLM's halt mechanism to stop continuation after handoff
+    # The runner switches agents after this tool records the handoff.
     # Store handoff info in context for Runner to detect and process
     def perform(tool_context)
       prepare_handoff(tool_context)
@@ -143,7 +143,7 @@ module Agents
       accepted = tool_context.run_context.prepare_handoff(handoff_info)
       return "A handoff is already pending; no additional handoff was created." unless accepted
 
-      halt(message || "I'll transfer you to #{@target_agent.name} who can better assist you with this.")
+      message || "I'll transfer you to #{@target_agent.name} who can better assist you with this."
     end
   end
 end

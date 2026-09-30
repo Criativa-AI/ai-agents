@@ -47,18 +47,18 @@ RSpec.describe Agents::HandoffTool do
   end
 
   describe "#perform" do
-    it "returns halt with transfer message" do
+    it "returns transfer message" do
       run_context = Agents::RunContext.new({})
       tool_context = Agents::ToolContext.new(run_context: run_context)
 
       result = handoff_tool.perform(tool_context)
 
-      expect(result).to be_a(RubyLLM::Tool::Halt)
-      expect(result.content).to eq("I'll transfer you to Support Agent who can better assist you with this.")
+      expect(result).to be_a(String)
+      expect(result).to eq("I'll transfer you to Support Agent who can better assist you with this.")
       expect(run_context.context[:pending_handoff]).to include(target_agent: target_agent)
     end
 
-    it "allows subclasses to attach a reason, metadata, and custom halt message" do
+    it "allows subclasses to attach a reason, metadata, and custom transfer message" do
       structured_tool_class = Class.new(described_class) do
         def perform(tool_context)
           prepare_handoff(
@@ -74,8 +74,8 @@ RSpec.describe Agents::HandoffTool do
 
       result = structured_tool_class.new(target_agent).perform(tool_context)
 
-      expect(result).to be_a(RubyLLM::Tool::Halt)
-      expect(result.content).to eq("Routing to billing")
+      expect(result).to be_a(String)
+      expect(result).to eq("Routing to billing")
       expect(run_context.context[:pending_handoff]).to include(
         target_agent: target_agent,
         reason: "Needs billing expertise",
@@ -94,16 +94,16 @@ RSpec.describe Agents::HandoffTool do
         Thread.new do
           ready << true
           start.pop
-          results << wrapper.call({})
+          results << wrapper.call
         end
       end
       wrappers.size.times { ready.pop }
       wrappers.size.times { start << true }
       threads.each(&:join)
 
-      halt_count = wrappers.size.times.count { results.pop.is_a?(RubyLLM::Tool::Halt) }
+      accepted_count = wrappers.size.times.count { results.pop.start_with?("I'll transfer you to") }
 
-      expect(halt_count).to eq(1)
+      expect(accepted_count).to eq(1)
       expect([target_agent, other_agent]).to include(run_context.context[:pending_handoff][:target_agent])
     end
   end
