@@ -556,7 +556,7 @@ RSpec.describe Agents::Runner do
     context "with image and PDF attachments in history" do
       it "preserves native message text and typed image and PDF attachments" do
         message = RubyLLM::Message.new(role: :user, content: "Compare files",
-                                      attachments: ["https://example.com/image.png", "https://example.com/guide.pdf"])
+                                       attachments: ["https://example.com/image.png", "https://example.com/guide.pdf"])
 
         text, attachments = described_class.new.send(:build_content, message)
 
