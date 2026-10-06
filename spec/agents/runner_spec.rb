@@ -554,6 +554,17 @@ RSpec.describe Agents::Runner do
     end
 
     context "with image and PDF attachments in history" do
+      it "preserves native message text and typed image and PDF attachments" do
+        message = RubyLLM::Message.new(role: :user, content: "Compare files",
+                                      attachments: ["https://example.com/image.png", "https://example.com/guide.pdf"])
+
+        text, attachments = described_class.new.send(:build_content, message)
+
+        expect(text).to eq("Compare files")
+        expect(attachments).to eq(message.attachments)
+        expect(attachments.map(&:mime_type)).to eq(["image/png", "application/pdf"])
+      end
+
       it "round trips extracted attachment history without nesting its content" do
         source_message = RubyLLM::Message.new(
           role: :user, content: "Compare these attachments",

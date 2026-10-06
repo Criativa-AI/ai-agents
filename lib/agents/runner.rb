@@ -361,6 +361,8 @@ module Agents
     # Split stored content into RubyLLM 2 text and attachments.
     # Multimodal arrays follow the OpenAI content format: [{type: 'text', text: '...'}, {type: 'image_url', ...}]
     def build_content(content_value)
+      return [content_value.content, content_value.attachments] if content_value.is_a?(RubyLLM::Message)
+
       return [content_value.to_json, []] if content_value.is_a?(Hash)
       return [content_value, []] unless content_value.is_a?(Array)
 
@@ -484,7 +486,8 @@ module Agents
       return false unless last_msg&.role == :user
 
       content, attachments = build_content(input)
-      last_msg.content == content && last_msg.attachments.map { |attachment| attachment.source.to_s } == attachments
+      last_msg.content == content && last_msg.attachments.map { |attachment| attachment.source.to_s } ==
+        attachments.map { |attachment| attachment.is_a?(RubyLLM::Attachment) ? attachment.source.to_s : attachment }
     end
 
     def apply_headers(chat, headers)
