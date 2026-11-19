@@ -56,7 +56,11 @@
 #   # - No race conditions or data leakage between runs
 module Agents
   class RunContext
-    attr_reader :context, :usage, :callbacks, :callback_manager
+    attr_reader :context, :usage, :callbacks, :callback_manager, :tool_halt
+
+    def halt_after_tool(result)
+      @tool_halt ||= result
+    end
 
     # Initialize a new RunContext with execution context and usage tracking
     #

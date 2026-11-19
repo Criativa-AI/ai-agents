@@ -44,6 +44,7 @@ module Agents
 
     # RubyLLM calls this method (follows RubyLLM::Tool pattern)
     def call(tool_call: nil, **args) # rubocop:disable Lint/UnusedMethodArgument
+      return "Skipped after tool stopped the run" if @context_wrapper.tool_halt
       return "Skipped after agent handoff" if @context_wrapper.context[:pending_handoff]
 
       tool_context = ToolContext.new(run_context: @context_wrapper)
@@ -52,6 +53,10 @@ module Agents
 
       begin
         result = @tool.execute(tool_context, **args.transform_keys(&:to_sym))
+        if result.is_a?(Tool::Halt)
+          @context_wrapper.halt_after_tool(result)
+          result = result.content
+        end
         @context_wrapper.callback_manager.emit_tool_complete(@tool.name, result, @context_wrapper)
         result
       rescue StandardError => e

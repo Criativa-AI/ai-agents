@@ -76,6 +76,46 @@ RSpec.describe Agents::Runner do
   describe "#run" do
     let(:runner) { described_class.new }
 
+    it "stops before later tools even with provider concurrency configured" do
+      old_concurrency = RubyLLM.config.tool_concurrency
+      RubyLLM.config.tool_concurrency = :threads
+      halt_tool = Class.new(Agents::Tool) do
+        def name
+          "stop_tool"
+        end
+
+        description "Stop the current agent run."
+
+        def perform(_tool_context)
+          halt("Run stopped")
+        end
+      end
+      effect_tool = Class.new(Agents::Tool) do
+        def name
+          "effect_tool"
+        end
+
+        description "Perform another action."
+
+        def perform(_tool_context)
+          raise "The later tool must not run"
+        end
+      end
+      current = Agents::Agent.new(name: "Agent", model: "gpt-4o", tools: [halt_tool.new, effect_tool.new])
+      request = stub_tool_call_chat(tool_calls: [
+        { name: "stop_tool", arguments: {} },
+        { name: "effect_tool", arguments: {} }
+      ])
+
+      result = runner.run(current, "Stop before the next tool")
+
+      expect(result).to be_success
+      expect(result.output).to eq("Run stopped")
+      expect(request).to have_been_requested.once
+    ensure
+      RubyLLM.config.tool_concurrency = old_concurrency
+    end
+
     context "when simple conversation without tools" do
       before do
         stub_simple_chat("Hello! How can I help you?")
@@ -120,6 +160,7 @@ RSpec.describe Agents::Runner do
           params: {}
         )
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello from Azure",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -211,6 +252,7 @@ RSpec.describe Agents::Runner do
     context "with custom headers" do
       it "passes runtime headers to RubyLLM chat" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         headers = { "X-Test" => "value" }
@@ -233,6 +275,7 @@ RSpec.describe Agents::Runner do
 
       it "applies agent default headers when runtime headers are absent" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with agent headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -255,6 +298,7 @@ RSpec.describe Agents::Runner do
 
       it "merges headers giving runtime precedence over agent defaults" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with merged headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         runtime_headers = {
@@ -287,6 +331,7 @@ RSpec.describe Agents::Runner do
     context "with custom params" do
       it "passes runtime params to RubyLLM chat" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         params = { service_tier: "default" }
@@ -309,6 +354,7 @@ RSpec.describe Agents::Runner do
 
       it "applies agent default params when runtime params are absent" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with agent params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -331,6 +377,7 @@ RSpec.describe Agents::Runner do
 
       it "merges params giving runtime precedence over agent defaults" do
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with merged params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         runtime_params = { service_tier: "default", max_tokens: 1000 }
@@ -554,6 +601,22 @@ RSpec.describe Agents::Runner do
     end
 
     context "with image and PDF attachments in history" do
+      it "restores a local attachment from the extracted history" do
+        source = StringIO.new("%PDF-1.4")
+        attachment = RubyLLM::Attachment.new(source, filename: "guide.pdf")
+        original = RubyLLM::Message.new(role: :user, content: "Read the guide", attachments: [attachment])
+        original_chat = instance_double(RubyLLM::Chat, messages: [original])
+        history = Agents::Helpers::MessageExtractor.extract_messages(original_chat, nil)
+        restored_chat = RubyLLM.chat(model: "gpt-4o")
+        context_wrapper = Agents::RunContext.new({ conversation_history: history })
+
+        runner.send(:restore_conversation_history, restored_chat, context_wrapper)
+
+        expect(restored_chat.messages.first.content).to eq("Read the guide")
+        expect(restored_chat.messages.first.attachments.first.source).to equal(source)
+        expect(restored_chat.messages.first.attachments.first.mime_type).to eq("application/pdf")
+      end
+
       it "preserves native message text and typed image and PDF attachments" do
         message = RubyLLM::Message.new(role: :user, content: "Compare files",
                                        attachments: ["https://example.com/image.png", "https://example.com/guide.pdf"])
@@ -925,6 +988,7 @@ RSpec.describe Agents::Runner do
 
         # Mock other required methods
         allow(mock_chat).to receive_messages(
+          with_tool_options: mock_chat,
           with_instructions: mock_chat,
           with_temperature: mock_chat,
           with_tools: mock_chat,
@@ -1186,6 +1250,7 @@ RSpec.describe Agents::Runner do
       it "raises MaxTurnsExceeded and returns error result" do
         # Mock chat to always return tool_call? = true, causing infinite loop
         mock_chat = instance_double(RubyLLM::Chat)
+        allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
         mock_response = instance_double(RubyLLM::Message, tool_call?: true,
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
