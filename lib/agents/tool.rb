@@ -38,6 +38,8 @@
 #
 module Agents
   class Tool < RubyLLM::Tool
+    Halt = Data.define(:content)
+
     # Keep custom tools written for ai-agents 0.12 working with RubyLLM 2.
     def self.param(name, **options)
       old_description = options.delete(:desc)
@@ -74,6 +76,13 @@ module Agents
     #   end
     def perform(tool_context, **params)
       raise NotImplementedError, "Tools must implement #perform(tool_context, **params)"
+    end
+
+    protected
+
+    # Return this result from a tool to finish the current run.
+    def halt(content)
+      Halt.new(content)
     end
   end
 end

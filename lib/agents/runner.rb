@@ -138,6 +138,9 @@ module Agents
         )
 
         chat.run_tools if response.tool_call?
+        if (halt = context_wrapper.tool_halt)
+          return finalize_run(chat, context_wrapper, current_agent, output: halt.content)
+        end
 
         if context_wrapper.context[:pending_handoff]
           handoff_info = context_wrapper.take_pending_handoff
@@ -210,8 +213,10 @@ module Agents
     private
 
     def build_chat(agent)
-      RubyLLM::Chat.new(model: agent.model, provider: agent.provider, protocol: agent.protocol,
-                        assume_model_exists: agent.assume_model_exists)
+      chat = RubyLLM::Chat.new(model: agent.model, provider: agent.provider, protocol: agent.protocol,
+                               assume_model_exists: agent.assume_model_exists)
+      # The run can stop after any tool result. Run tools in request order.
+      chat.with_tool_options(concurrency: false)
     end
 
     # Saves conversation state, builds a RunResult, emits completion callbacks, and returns it.
