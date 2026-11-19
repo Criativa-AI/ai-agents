@@ -601,6 +601,22 @@ RSpec.describe Agents::Runner do
     end
 
     context "with image and PDF attachments in history" do
+      it "restores a local attachment from the extracted history" do
+        source = StringIO.new("%PDF-1.4")
+        attachment = RubyLLM::Attachment.new(source, filename: "guide.pdf")
+        original = RubyLLM::Message.new(role: :user, content: "Read the guide", attachments: [attachment])
+        original_chat = instance_double(RubyLLM::Chat, messages: [original])
+        history = Agents::Helpers::MessageExtractor.extract_messages(original_chat, nil)
+        restored_chat = RubyLLM.chat(model: "gpt-4o")
+        context_wrapper = Agents::RunContext.new({ conversation_history: history })
+
+        runner.send(:restore_conversation_history, restored_chat, context_wrapper)
+
+        expect(restored_chat.messages.first.content).to eq("Read the guide")
+        expect(restored_chat.messages.first.attachments.first.source).to equal(source)
+        expect(restored_chat.messages.first.attachments.first.mime_type).to eq("application/pdf")
+      end
+
       it "preserves native message text and typed image and PDF attachments" do
         message = RubyLLM::Message.new(role: :user, content: "Compare files",
                                        attachments: ["https://example.com/image.png", "https://example.com/guide.pdf"])

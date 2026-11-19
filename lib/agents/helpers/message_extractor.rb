@@ -104,6 +104,10 @@ module Agents
         content = message_content?(msg) ? msg.content : ""
         return content if msg.attachments.empty?
 
+        unless msg.attachments.all?(&:url?)
+          return RubyLLM::Message.new(role: msg.role, content: content, attachments: msg.attachments)
+        end
+
         parts = content.to_s.empty? ? [] : [{ type: "text", text: content }]
         parts + msg.attachments.map do |attachment|
           { type: "image_url", image_url: { url: attachment.source.to_s } }
