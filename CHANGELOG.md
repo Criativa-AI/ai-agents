@@ -14,6 +14,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Prevent concurrently executed handoff tools from overwriting the first accepted pending handoff.
 
+## [0.14.0] - 2026-11-04
+
+### Added
+- Support RubyLLM 2.1 alongside 2.0.
+
+### Changed
+- Preserve the provider and model for restored thinking signatures so RubyLLM can replay them to an eligible producer.
+- Follow the RubyLLM 2.1 tool registration contract while preserving the fork's synchronous tool and handoff behavior.
+
+## [0.13.0] - 2026-10-07
+
 ### Changed
 - Require RubyLLM 2.0 starting with ai-agents 0.13.0. Applications using RubyLLM 1.x can keep ai-agents 0.12.0.
 - Keep the previous `param :name, desc: "..."` tool declaration syntax working with RubyLLM 2.0.

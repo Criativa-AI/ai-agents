@@ -329,9 +329,7 @@ module Agents
       content, attachments = build_content(content_value)
       params = { role: role, content: content }
       params[:attachments] = attachments if attachments.any?
-      if role == :assistant && msg[:thinking_signature]
-        params[:thinking] = { text: msg[:thinking], signature: msg[:thinking_signature] }
-      end
+      params.merge!(thinking_input(msg)) if role == :assistant && msg[:thinking_signature]
 
       # Handle tool-specific parameters (Tool Results)
       if role == :tool
@@ -361,6 +359,19 @@ module Agents
       end
 
       params
+    end
+
+    # Restores the producer that RubyLLM checks before it replays a thinking signature.
+    # RubyLLM's Rails persistence restores the same entry from its usage table.
+    def thinking_input(msg)
+      input = { thinking: { text: msg[:thinking], signature: msg[:thinking_signature] } }
+      provider = msg[:thinking_provider]
+      return input unless provider
+
+      entry = RubyLLM::Accounting::Usage::Entry.new(
+        operation: :chat, provider: provider, model: msg[:thinking_model], status: :succeeded
+      )
+      input.merge(usage_entries: [entry])
     end
 
     # Split stored content into RubyLLM 2 text and attachments.
