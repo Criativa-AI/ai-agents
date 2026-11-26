@@ -54,7 +54,7 @@ module Agents
   class Runner
     DEFAULT_MAX_TURNS = 10
 
-    class MaxTurnsExceeded < StandardError; end
+    class MaxTurnsExceeded < ExecutionBudget::Exceeded; end
     class AgentNotFoundError < StandardError; end
 
     # Create a thread-safe agent runner for multi-agent conversations.
@@ -85,13 +85,14 @@ module Agents
     # @param callbacks [Hash] Optional callbacks for real-time event notifications
     # @return [RunResult] The result containing output, messages, and usage
     def run(starting_agent, input, context: {}, registry: {}, max_turns: DEFAULT_MAX_TURNS, headers: nil, params: nil,
-            callbacks: {})
+            callbacks: {}, limits: {}, execution_budget: nil)
       # The starting_agent is already determined by AgentRunner based on conversation history
       current_agent = starting_agent
 
       # Create context wrapper with deep copy for thread safety
       context_copy = deep_copy_context(context)
-      context_wrapper = RunContext.new(context_copy, callbacks: callbacks)
+      budget = ExecutionBudget.for_run(max_turns: max_turns, limits: limits, parent: execution_budget)
+      context_wrapper = RunContext.new(context_copy, callbacks: callbacks, execution_budget: budget)
       current_turn = 0
 
       # Emit run start event
@@ -103,7 +104,8 @@ module Agents
       agent_params = Helpers::HashNormalizer.normalize(current_agent.params, label: "params")
 
       # Create chat and restore conversation history
-      chat = build_chat(current_agent)
+      runtime_context = RubyLLM.context { |config| config.max_retries = 0 }
+      chat = build_chat(current_agent, runtime_context)
       current_headers = Helpers::HashNormalizer.merge(agent_headers, runtime_headers)
       current_params = Helpers::HashNormalizer.merge(agent_params, runtime_params)
       apply_headers(chat, current_headers)
@@ -115,19 +117,16 @@ module Agents
         content, attachments = build_content(input)
         chat.ask_later(content, with: attachments)
       end
-      context_wrapper.callback_manager.emit_chat_created(
-        chat, current_agent.name, current_agent.model, context_wrapper, current_agent.temperature,
-        current_agent.protocol, current_agent.thinking
-      )
+      observe_chat(chat, current_agent, context_wrapper)
 
       loop do
-        current_turn += 1
-        raise MaxTurnsExceeded, "Exceeded maximum turns: #{max_turns}" if current_turn > max_turns
-
         # One provider request per turn. Run tools separately so handoffs stop before another request.
+        budget.consume!(:model_calls)
+        current_turn += 1
         message_count_before_response = chat_message_count(chat)
         thinking_input = current_turn == 1 ? input : "(continuing conversation)"
         context_wrapper.callback_manager.emit_agent_thinking(current_agent.name, thinking_input, context_wrapper)
+        budget.check_duration!
         response = chat.generate
         assign_agent_name_to_new_assistant_messages(chat, current_agent, message_count_before_response)
         track_usage(response, context_wrapper)
@@ -138,6 +137,9 @@ module Agents
         )
 
         chat.run_tools if response.tool_call?
+        raise context_wrapper.execution_error if context_wrapper.execution_error
+
+        budget.check_duration!
         if (halt = context_wrapper.tool_halt)
           return finalize_run(chat, context_wrapper, current_agent, output: halt.content)
         end
@@ -175,7 +177,7 @@ module Agents
           context_wrapper.context[:current_agent] = next_agent.name
 
           # A fresh chat prevents protocol and thinking settings leaking across agents.
-          next_chat = build_chat(current_agent)
+          next_chat = build_chat(current_agent, runtime_context)
           next_chat.messages = chat.messages
           chat = next_chat
           configure_chat_for_agent(chat, current_agent, context_wrapper, replace: false)
@@ -185,10 +187,7 @@ module Agents
           agent_params = Helpers::HashNormalizer.normalize(current_agent.params, label: "params")
           current_params = Helpers::HashNormalizer.merge(agent_params, runtime_params)
           chat.with_provider_options(current_params)
-          context_wrapper.callback_manager.emit_chat_created(
-            chat, current_agent.name, current_agent.model, context_wrapper, current_agent.temperature,
-            current_agent.protocol, current_agent.thinking
-          )
+          observe_chat(chat, current_agent, context_wrapper)
 
           # Force the new agent to respond to the conversation context
           # This ensures the user gets a response from the new agent
@@ -207,16 +206,25 @@ module Agents
       finalize_run(chat, context_wrapper, current_agent,
                    output: "Conversation ended: #{e.message}", error: e)
     rescue StandardError => e
+      raise unless context_wrapper
+
       finalize_run(chat, context_wrapper, current_agent, output: nil, error: e)
     end
 
     private
 
-    def build_chat(agent)
+    def build_chat(agent, runtime_context)
       chat = RubyLLM::Chat.new(model: agent.model, provider: agent.provider, protocol: agent.protocol,
-                               assume_model_exists: agent.assume_model_exists)
+                              assume_model_exists: agent.assume_model_exists, context: runtime_context)
       # The run can stop after any tool result. Run tools in request order.
       chat.with_tool_options(concurrency: false)
+    end
+
+    def observe_chat(chat, agent, context_wrapper)
+      context_wrapper.callback_manager.emit_chat_created(
+        chat, agent.name, agent.model, context_wrapper, agent.temperature, agent.protocol, agent.thinking
+      )
+      chat.before_fallback { context_wrapper.execution_budget.consume!(:model_calls) }
     end
 
     # Saves conversation state, builds a RunResult, emits completion callbacks, and returns it.
@@ -230,6 +238,7 @@ module Agents
     # @return [RunResult]
     def finalize_run(chat, context_wrapper, current_agent, output:, error: nil)
       save_conversation_state(chat, context_wrapper, current_agent) if chat
+      context_wrapper.context[:execution_counts] = context_wrapper.execution_budget.snapshot
 
       result = RunResult.new(
         output: output,

@@ -67,20 +67,8 @@ module Agents
 
     # Execute the wrapped agent with constraints to prevent handoffs and recursion
     def perform(tool_context, input:)
-      # Create isolated context for the wrapped agent
-      isolated_context = create_isolated_context(tool_context.context)
-
-      # Execute with explicit constraints:
-      # 1. Empty registry prevents handoffs
-      # 2. Low max_turns prevents infinite loops
-      # 3. Isolated context prevents history access
-      result = Runner.new.run(
-        @wrapped_agent,
-        input,
-        context: isolated_context,
-        registry: {}, # CONSTRAINT: No handoffs allowed
-        max_turns: 3  # CONSTRAINT: Limited turns for tool execution
-      )
+      result = run_agent(tool_context, input)
+      raise result.error if result.error.is_a?(ExecutionBudget::Exceeded)
 
       return "Agent execution failed: #{result.error.message}" if result.error
 
@@ -90,11 +78,39 @@ module Agents
       else
         result.output || "No output from #{@wrapped_agent.name}"
       end
+    rescue ExecutionBudget::Exceeded
+      raise
     rescue StandardError => e
       "Error executing #{@wrapped_agent.name}: #{e.message}"
     end
 
     private
+
+    def run_agent(tool_context, input)
+      parent = tool_context.run_context
+      result = Runner.new.run(
+        @wrapped_agent, input,
+        context: create_isolated_context(tool_context.context),
+        registry: {},
+        max_turns: 3,
+        execution_budget: parent.execution_budget,
+        callbacks: nested_callbacks(parent)
+      )
+      parent.usage.merge!(result.usage)
+      result
+    end
+
+    # Preserve observations without ending the parent's lifecycle or replacing its active tool.
+    def nested_callbacks(parent)
+      {
+        llm_call_complete: [lambda do |agent, model, response, _child|
+          parent.callback_manager.emit_llm_call_complete(agent, model, response, parent)
+        end],
+        chat_created: [lambda do |chat, agent, model, _child, temperature, protocol, thinking|
+          parent.callback_manager.emit_chat_created(chat, agent, model, parent, temperature, protocol, thinking)
+        end]
+      }
+    end
 
     def transform_agent_name(name)
       Helpers::NameNormalizer.to_tool_name(name)

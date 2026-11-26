@@ -50,25 +50,14 @@ module Agents
 
     # RubyLLM calls this method (follows RubyLLM::Tool pattern)
     def call(tool_call: nil, **args) # rubocop:disable Lint/UnusedMethodArgument
+      return "Skipped after execution limit" if @context_wrapper.execution_error
       return "Skipped after tool stopped the run" if @context_wrapper.tool_halt
       return "Skipped after agent handoff" if @context_wrapper.context[:pending_handoff]
 
-      tool_context = ToolContext.new(run_context: @context_wrapper)
-
-      @context_wrapper.callback_manager.emit_tool_start(@tool.name, args, @context_wrapper)
-
-      begin
-        result = @tool.execute(tool_context, **args.transform_keys(&:to_sym))
-        if result.is_a?(Tool::Halt)
-          @context_wrapper.halt_after_tool(result)
-          result = result.content
-        end
-        @context_wrapper.callback_manager.emit_tool_complete(@tool.name, result, @context_wrapper)
-        result
-      rescue StandardError => e
-        @context_wrapper.callback_manager.emit_tool_complete(@tool.name, "ERROR: #{e.message}", @context_wrapper, e)
-        raise
-      end
+      @context_wrapper.execution_budget.consume!(:tool_calls)
+      execute_tool(args)
+    rescue ExecutionBudget::Exceeded => e
+      @context_wrapper.stop_for_limit(e)
     end
 
     # Delegate metadata methods to the tool
@@ -99,6 +88,26 @@ module Agents
     # Make this work with RubyLLM's tool calling
     def to_s
       name
+    end
+
+    private
+
+    def execute_tool(args)
+      tool_context = ToolContext.new(run_context: @context_wrapper)
+
+      @context_wrapper.callback_manager.emit_tool_start(@tool.name, args, @context_wrapper)
+
+      @context_wrapper.execution_budget.check_duration!
+      result = @tool.execute(tool_context, **args.transform_keys(&:to_sym))
+      if result.is_a?(Tool::Halt)
+        @context_wrapper.halt_after_tool(result)
+        result = result.content
+      end
+      @context_wrapper.callback_manager.emit_tool_complete(@tool.name, result, @context_wrapper)
+      result
+    rescue StandardError => e
+      @context_wrapper.callback_manager.emit_tool_complete(@tool.name, "ERROR: #{e.message}", @context_wrapper, e)
+      raise
     end
   end
 end

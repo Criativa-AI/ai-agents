@@ -56,7 +56,12 @@
 #   # - No race conditions or data leakage between runs
 module Agents
   class RunContext
-    attr_reader :context, :usage, :callbacks, :callback_manager, :tool_halt
+    attr_reader :context, :usage, :callbacks, :callback_manager, :tool_halt, :execution_budget, :execution_error
+
+    def stop_for_limit(error)
+      @execution_error ||= error
+      { error: @execution_error.message }
+    end
 
     def halt_after_tool(result)
       @tool_halt ||= result
@@ -66,9 +71,10 @@ module Agents
     #
     # @param context [Hash] The execution context data (will be duplicated for isolation)
     # @param callbacks [Hash] Optional callbacks for real-time event notifications
-    def initialize(context, callbacks: {})
+    def initialize(context, callbacks: {}, execution_budget: ExecutionBudget.new)
       @context = context
       @usage = Usage.new
+      @execution_budget = execution_budget
       @callbacks = callbacks || {}
       @callback_manager = CallbackManager.new(@callbacks)
       @handoff_mutex = Mutex.new
@@ -83,6 +89,7 @@ module Agents
       @handoff_mutex.synchronize do
         return false if @context[:pending_handoff]
 
+        execution_budget.consume!(:handoffs)
         @context[:pending_handoff] = handoff_info
         true
       end
@@ -122,6 +129,12 @@ module Agents
         @input_tokens = 0
         @output_tokens = 0
         @total_tokens = 0
+      end
+
+      def merge!(other)
+        @input_tokens += other.input_tokens
+        @output_tokens += other.output_tokens
+        @total_tokens += other.total_tokens
       end
 
       # Add usage metrics from an LLM response to the running totals.

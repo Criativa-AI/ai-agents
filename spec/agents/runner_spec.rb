@@ -161,6 +161,7 @@ RSpec.describe Agents::Runner do
         )
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello from Azure",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -168,7 +169,8 @@ RSpec.describe Agents::Runner do
           model: "deployment-name",
           provider: :azure,
           protocol: nil,
-          assume_model_exists: true
+          assume_model_exists: true,
+          context: an_instance_of(RubyLLM::Context)
         ).and_return(mock_chat)
         allow(mock_chat).to receive(:add_message)
         allow(Agents::Helpers::MessageExtractor).to receive(:extract_messages).and_return([])
@@ -253,6 +255,7 @@ RSpec.describe Agents::Runner do
       it "passes runtime headers to RubyLLM chat" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         headers = { "X-Test" => "value" }
@@ -276,6 +279,7 @@ RSpec.describe Agents::Runner do
       it "applies agent default headers when runtime headers are absent" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with agent headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -299,6 +303,7 @@ RSpec.describe Agents::Runner do
       it "merges headers giving runtime precedence over agent defaults" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with merged headers",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         runtime_headers = {
@@ -332,6 +337,7 @@ RSpec.describe Agents::Runner do
       it "passes runtime params to RubyLLM chat" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         params = { service_tier: "default" }
@@ -355,6 +361,7 @@ RSpec.describe Agents::Runner do
       it "applies agent default params when runtime params are absent" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with agent params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 
@@ -378,6 +385,7 @@ RSpec.describe Agents::Runner do
       it "merges params giving runtime precedence over agent defaults" do
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: false, content: "Hello with merged params",
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
         runtime_params = { service_tier: "default", max_tokens: 1000 }
@@ -989,6 +997,7 @@ RSpec.describe Agents::Runner do
         # Mock other required methods
         allow(mock_chat).to receive_messages(
           with_tool_options: mock_chat,
+          before_fallback: mock_chat,
           with_instructions: mock_chat,
           with_temperature: mock_chat,
           with_tools: mock_chat,
@@ -1251,6 +1260,7 @@ RSpec.describe Agents::Runner do
         # Mock chat to always return tool_call? = true, causing infinite loop
         mock_chat = instance_double(RubyLLM::Chat)
         allow(mock_chat).to receive(:with_tool_options).with(concurrency: false).and_return(mock_chat)
+        allow(mock_chat).to receive(:before_fallback)
         mock_response = instance_double(RubyLLM::Message, tool_call?: true,
                                                           tokens: RubyLLM::Tokens.new(input: 10, output: 5))
 

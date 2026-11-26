@@ -128,6 +128,7 @@ RSpec.describe Agents::AgentRunner do
           context: {},
           registry: hash_including("Triage Agent" => triage_agent),
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: nil,
           params: nil,
           callbacks: hash_including(
@@ -152,6 +153,7 @@ RSpec.describe Agents::AgentRunner do
           context: {},
           registry: anything,
           max_turns: 5,
+          limits: {},
           headers: nil,
           params: nil,
           callbacks: hash_including(
@@ -178,6 +180,7 @@ RSpec.describe Agents::AgentRunner do
           context: {},
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: headers,
           params: nil,
           callbacks: hash_including(
@@ -214,6 +217,7 @@ RSpec.describe Agents::AgentRunner do
           context: context_with_history,
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: nil,
           params: nil,
           callbacks: hash_including(
@@ -249,6 +253,7 @@ RSpec.describe Agents::AgentRunner do
           context: context_with_unknown_agent,
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: nil,
           params: nil,
           callbacks: hash_including(
@@ -284,6 +289,7 @@ RSpec.describe Agents::AgentRunner do
           context: context_without_attribution,
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: nil,
           params: nil,
           callbacks: hash_including(
@@ -317,6 +323,7 @@ RSpec.describe Agents::AgentRunner do
           context: {},
           registry: anything,
           max_turns: Agents::Runner::DEFAULT_MAX_TURNS,
+          limits: {},
           headers: nil,
           params: params,
           callbacks: hash_including(
