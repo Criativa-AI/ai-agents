@@ -83,11 +83,10 @@ module Agents
         tracing = tracing_state(context_wrapper)
         return unless tracing
 
-        tracing[:request_attributes] = { model: model, temperature: temperature,
-                                         protocol: protocol, thinking: thinking }
-        return if tracing[:instrumented_chat].equal?(chat)
-
-        tracing[:instrumented_chat] = chat
+        requests = tracing[:chat_requests] ||= {}.compare_by_identity
+        instrumented = requests.key?(chat)
+        requests[chat] = { model: model, temperature: temperature, protocol: protocol, thinking: thinking }
+        return if instrumented
 
         chat.after_message do |message|
           handle_end_message(chat, message, context_wrapper)
@@ -176,10 +175,11 @@ module Agents
           attributes: generation_span_attributes(tracing, chat, message, context_wrapper)
         )
 
-        set_llm_request_attributes(llm_span, tracing[:request_attributes])
+        request_attributes = tracing.fetch(:chat_requests).fetch(chat)
+        set_llm_request_attributes(llm_span, request_attributes)
 
         output = llm_output_text(message)
-        set_llm_response_attributes(llm_span, message, output, tracing[:request_attributes])
+        set_llm_response_attributes(llm_span, message, output, request_attributes)
         tracing[:last_agent_output] = output unless output.empty?
 
         llm_span.finish

@@ -113,6 +113,7 @@ end
 
 # Core components
 require_relative "agents/result"
+require_relative "agents/execution_budget"
 require_relative "agents/run_context"
 require_relative "agents/tool_context"
 require_relative "agents/tool"

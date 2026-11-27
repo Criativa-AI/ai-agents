@@ -563,6 +563,21 @@ RSpec.describe Agents::Instrumentation::TracingCallbacks do
       expect(llm_span).to have_received(:set_attribute).with("gen_ai.request.temperature", 0.4)
     end
 
+    it "keeps the parent's request attributes after observing a nested chat" do
+      handlers = []
+      nested_chat = instance_double(RubyLLM::Chat)
+      allow(chat).to receive(:after_message) { |&handler| handlers << handler }
+      allow(nested_chat).to receive_messages(messages: [assistant_message], after_message: nil)
+      allow(tracer).to receive(:start_span).and_return(llm_span)
+
+      callbacks.on_chat_created(chat, "Parent", "gpt-4o", context_wrapper, 0.2)
+      callbacks.on_chat_created(nested_chat, "Child", "gpt-4o-mini", context_wrapper, 0.5)
+      handlers.first.call(assistant_message)
+
+      expect(llm_span).to have_received(:set_attribute).with("gen_ai.request.model", "gpt-4o")
+      expect(llm_span).to have_received(:set_attribute).with("gen_ai.request.temperature", 0.2)
+    end
+
     it "parents LLM spans under agent context" do
       allow(tracer).to receive(:start_span).and_return(llm_span)
 

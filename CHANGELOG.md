@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Allow individual agent relationships to register custom `HandoffTool` factories and acceptance hooks.
+- Share execution limits and token accounting across an agent run and nested agents. See [Execution limits](docs/concepts/execution-limits.md).
 - Carry optional handoff reasons and metadata into hooks and `agent_handoff` callbacks without persisting them to conversation history.
 
 ### Fixed

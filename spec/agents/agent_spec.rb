@@ -537,6 +537,7 @@ RSpec.describe Agents::Agent do
         mock_result = instance_double(
           Agents::RunResult,
           output: "Echoed: test input",
+          usage: Agents::RunContext::Usage.new,
           error: nil
         )
 
@@ -551,7 +552,9 @@ RSpec.describe Agents::Agent do
           "test input",
           context: { state: { test: true } },
           registry: {},
-          max_turns: 3
+          max_turns: 3,
+          execution_budget: tool_context.run_context.execution_budget,
+          callbacks: hash_including(:llm_call_complete, :chat_created)
         )
       end
     end
