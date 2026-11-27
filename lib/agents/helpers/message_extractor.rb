@@ -86,10 +86,7 @@ module Agents
         attributed_agent_name = attributed_agent_name_for(msg) || current_agent&.name
         message[:agent_name] = attributed_agent_name if attributed_agent_name
 
-        if msg.respond_to?(:thinking) && msg.thinking&.signature
-          message[:thinking] = msg.thinking.text if msg.thinking.text
-          message[:thinking_signature] = msg.thinking.signature
-        end
+        message.merge!(thinking_history(msg))
 
         if tool_calls_present
           # RubyLLM stores tool_calls as Hash with call_id => ToolCall object
@@ -98,6 +95,21 @@ module Agents
         end
 
         message
+      end
+
+      # RubyLLM replays a thinking signature only to the producer named in the message's usage
+      # entries. RubyLLM 2.0 checks the provider, and RubyLLM 2.1 checks the provider and model.
+      def thinking_history(msg)
+        thinking = msg.thinking if msg.respond_to?(:thinking)
+        return {} unless thinking&.signature
+
+        producer = msg.ruby_llm_usage_entries.reverse.find(&:succeeded?)
+        {
+          thinking: thinking.text,
+          thinking_signature: thinking.signature,
+          thinking_provider: producer&.provider,
+          thinking_model: producer&.model
+        }.compact
       end
 
       def persisted_content(msg)
@@ -137,8 +149,8 @@ module Agents
         }
       end
 
-      private_class_method :extract_user_or_assistant_message, :persisted_content, :extractable_message?,
-                           :message_content?, :assistant_tool_calls?, :extract_tool_message
+      private_class_method :extract_user_or_assistant_message, :thinking_history, :persisted_content,
+                           :extractable_message?, :message_content?, :assistant_tool_calls?, :extract_tool_message
     end
   end
 end
